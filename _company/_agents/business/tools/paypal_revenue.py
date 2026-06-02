@@ -1,4 +1,138 @@
 #!/usr/bin/env python3
+"""Minimal robust PayPal token helper.
+
+Provides a safe `get_paypal_token()` using HTTP Basic auth and forces
+UTF-8 stdout/stderr so Windows CP949 errors (emoji printing) won't crash.
+
+Usage: set env `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` and run.
+Optional env `PAYPAL_USE_SANDBOX=1` to use sandbox endpoint.
+"""
+import sys
+import os
+import io
+import base64
+import json
+
+def _ensure_utf8_stdout():
+    if os.name == 'nt':
+        try:
+            # Python 3.7+: TextIOBase.reconfigure
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            try:
+                sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+                sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+            except Exception:
+                # Best effort: if even this fails, proceed — prints may still error but we avoid crashing on import
+                pass
+
+
+_ensure_utf8_stdout()
+
+def get_paypal_token(client_id=None, client_secret=None, use_sandbox=False, timeout=10):
+    """Return (access_token, expires_in) or raise RuntimeError with helpful message.
+
+    - client_id/secret can be passed or read from env PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET
+    - use_sandbox True -> sandbox host
+    """
+    try:
+        import requests
+    except Exception as e:
+        raise RuntimeError("Missing dependency 'requests'. Install with: pip install requests") from e
+
+    client_id = client_id or os.getenv('PAYPAL_CLIENT_ID')
+    client_secret = client_secret or os.getenv('PAYPAL_CLIENT_SECRET')
+    if not client_id or not client_secret:
+        raise RuntimeError('PayPal client_id/secret not provided. Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET.')
+
+    host = 'https://api-m.sandbox.paypal.com' if use_sandbox else 'https://api-m.paypal.com'
+    url = f'{host}/v1/oauth2/token'
+    # Basic auth must be ASCII-encoded before base64
+    try:
+        pair = f"{client_id}:{client_secret}"
+        b64 = base64.b64encode(pair.encode('ascii')).decode('ascii')
+    except Exception:
+        # Fallback: ensure bytes and ignore non-ascii chars
+        pair = f"{client_id}:{client_secret}"
+        b64 = base64.b64encode(pair.encode('utf-8', errors='ignore')).decode('ascii')
+
+    headers = {
+        'Authorization': f'Basic {b64}',
+        'Accept': 'application/json',
+        'Accept-Language': 'en_US',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+
+    try:
+        r = requests.post(url, headers=headers, data='grant_type=client_credentials', timeout=timeout)
+    except Exception as e:
+        raise RuntimeError(f'Network error while requesting PayPal token: {e}')
+
+    # Do not expose secrets in error messages. Return helpful guidance instead.
+    if r.status_code != 200:
+        # Try parse JSON body for error details
+        body = None
+        try:
+            body = r.json()
+        except Exception:
+            body = r.text[:1000]
+
+        if r.status_code == 401:
+            # Common causes: wrong credentials, sandbox vs live mismatch, app not promoted to live
+            msg = (
+                f"PayPal token request failed (HTTP 401 Unauthorized).\n"
+                f"Likely causes: wrong client_id/secret, using Sandbox credentials on Live endpoint (or vice versa), or the app isn't promoted to Live.\n"
+                f"Endpoint used: {host}\n"
+                f"Server response: {json.dumps(body) if isinstance(body, dict) else body}"
+            )
+            raise RuntimeError(msg)
+
+        raise RuntimeError(f'PayPal token request failed (HTTP {r.status_code}): {body}')
+
+    try:
+        body = r.json()
+    except Exception:
+        raise RuntimeError('Failed to parse PayPal response as JSON')
+
+    return body.get('access_token'), body.get('expires_in')
+
+
+def _safe_print(msg):
+    """Print without raising on encoding errors — replace non-printable chars."""
+    try:
+        print(msg)
+    except Exception:
+        try:
+            print(msg.encode('utf-8', errors='replace').decode('utf-8', errors='replace'))
+        except Exception:
+            # Last resort: strip non-ascii
+            print(''.join(ch for ch in msg if ord(ch) < 128))
+
+
+def main():
+    use_sandbox = os.getenv('PAYPAL_USE_SANDBOX', '').strip() in ('1', 'true', 'True')
+    client_id = os.getenv('PAYPAL_CLIENT_ID')
+    client_secret = os.getenv('PAYPAL_CLIENT_SECRET')
+
+    try:
+        token, ttl = get_paypal_token(client_id, client_secret, use_sandbox=use_sandbox)
+        _safe_print('✅ PayPal token obtained successfully')
+        _safe_print(f'Access token (masked): {token[:6]}... (expires_in={ttl})')
+    except Exception as e:
+        # Provide concise guidance for common issues
+        _safe_print('\n❌ Failed to obtain PayPal token:')
+        _safe_print(str(e))
+        _safe_print('\nQuick checks:')
+        _safe_print('- Ensure PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are set in env')
+        _safe_print("- If you're using Sandbox credentials, set PAYPAL_USE_SANDBOX=1 or use sandbox endpoint")
+        _safe_print('- Confirm the app in PayPal Developer Dashboard is promoted to Live if using Live credentials')
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()
+#!/usr/bin/env python3
 # version: paypal_revenue_v3
 """PayPal 매출 자동 분석 — Connect AI 비즈니스 에이전트 전용.
 
