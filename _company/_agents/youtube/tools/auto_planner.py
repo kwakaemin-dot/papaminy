@@ -1,7 +1,24 @@
 #!/usr/bin/env python3
 """Auto Planner — runs trend_sniper.py on a fixed interval for a chosen
 duration (e.g. overnight). Reads its config from auto_planner.json."""
-import os, json, time, datetime, subprocess, sys
+import io, os, json, time, datetime, subprocess, sys
+
+# Windows 콘솔에서 Unicode 이모지를 출력할 때 CP949 인코딩 오류를 방지합니다.
+os.environ.setdefault("PYTHONUTF8", "1")
+def _force_utf8_stdio():
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+            return
+        except Exception:
+            pass
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    except Exception:
+        pass
+_force_utf8_stdio()
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "auto_planner.json")
@@ -36,10 +53,15 @@ def main():
         sys.exit(1)
     # 첫 실행 전 trend_sniper.py가 정상 동작하는지 빠르게 검증
     print("🔍 trend_sniper.py 첫 회차 검증 중 (~30초)...")
-    test_proc = subprocess.run([sys.executable, SNIPER_PATH], capture_output=True, text=True, timeout=300)
+    run_cmd = [sys.executable, "-X", "utf8", SNIPER_PATH]
+    test_proc = subprocess.run(run_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
     if test_proc.returncode != 0:
         print(f"❌ trend_sniper.py 검증 실패 (exit {test_proc.returncode})")
         print("   먼저 trend_sniper.py 단독으로 ▶ 실행해서 설정·키워드·LLM 연결 확인 후 재시도.")
+        if test_proc.stdout.strip():
+            print("   출력 일부:")
+            for line in test_proc.stdout.splitlines()[-5:]:
+                print(f"   {line}")
         if test_proc.stderr.strip():
             print("   에러 일부:")
             for line in test_proc.stderr.splitlines()[-5:]:
@@ -58,7 +80,7 @@ def main():
         elapsed_h = (time.time() - start) / 3600
         print(f"\n[{ts}] 🤖 {loop}회차 트렌드 스나이핑 (가동 {elapsed_h:.1f}시간)")
         try:
-            subprocess.run([sys.executable, SNIPER_PATH], check=False)
+            subprocess.run([sys.executable, "-X", "utf8", SNIPER_PATH], check=False)
         except Exception as e:
             print(f"❌ 실행 실패: {e}")
         next_at = datetime.datetime.now() + datetime.timedelta(hours=interval_h)

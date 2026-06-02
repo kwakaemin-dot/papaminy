@@ -10,9 +10,21 @@ Reads LOOKBACK_DAYS / TOP_N / COMMENT_SAMPLES from my_videos_check.json."""
 import io
 import os, json, sys, time, datetime, re, statistics, warnings, html as html_lib
 from collections import Counter
+
+os.environ.setdefault("PYTHONUTF8", "1")
 # 터미널 출력 통로를 utf-8로 강제 고정
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+else:
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    except Exception:
+        pass
 # v2.89.49 — DeprecationWarning(utcnow 등) 노이즈 제거. 사용자 채팅창 출력에 끼면 못생김.
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -147,6 +159,7 @@ def main():
 
     try:
         from googleapiclient.discovery import build
+        from googleapiclient.errors import HttpError
     except ImportError:
         print("❌ google-api-python-client 미설치. pip install google-api-python-client requests")
         sys.exit(1)
@@ -189,15 +202,49 @@ def main():
 
     # === 2. 최근 영상 목록 ===
     print(f"🔍 최근 {lookback}일 영상 가져오는 중...", file=sys.stderr)
-    after = (datetime.datetime.utcnow() - datetime.timedelta(days=lookback)).isoformat("T") + "Z"
-    sr = youtube.search().list(part="snippet", channelId=cid, maxResults=top_n,
-                                order="date", publishedAfter=after, type="video").execute()
+    after = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=lookback)).isoformat(timespec="seconds").replace("+00:00", "Z")
+    try:
+        sr = youtube.search().list(part="snippet", channelId=cid, maxResults=top_n,
+                                    order="date", publishedAfter=after, type="video").execute()
+    except HttpError as e:
+        error_reason = None
+        try:
+            details = json.loads(e.content.decode('utf-8', errors='replace'))
+            error_reason = details.get('error', {}).get('errors', [{}])[0].get('reason')
+        except Exception:
+            pass
+        if error_reason == 'rateLimitExceeded':
+            print("❌ YouTube API 쿼터가 초과되었습니다.", file=sys.stderr)
+            print("   Google Cloud Console에서 API 쿼터를 확인하거나 내일 다시 시도하세요.", file=sys.stderr)
+        else:
+            print(f"❌ API 호출 실패: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ 영상 목록 조회 실패: {e}", file=sys.stderr)
+        sys.exit(1)
     vids = [(it["id"]["videoId"], it["snippet"]["title"], it["snippet"]["publishedAt"])
             for it in sr.get("items", [])]
     if not vids:
         # Fallback to most recent regardless of lookback window
-        sr = youtube.search().list(part="snippet", channelId=cid, maxResults=top_n,
-                                    order="date", type="video").execute()
+        try:
+            sr = youtube.search().list(part="snippet", channelId=cid, maxResults=top_n,
+                                        order="date", type="video").execute()
+        except HttpError as e:
+            error_reason = None
+            try:
+                details = json.loads(e.content.decode('utf-8', errors='replace'))
+                error_reason = details.get('error', {}).get('errors', [{}])[0].get('reason')
+            except Exception:
+                pass
+            if error_reason == 'rateLimitExceeded':
+                print("❌ YouTube API 쿼터가 초과되었습니다.", file=sys.stderr)
+                print("   Google Cloud Console에서 API 쿼터를 확인하거나 내일 다시 시도하세요.", file=sys.stderr)
+            else:
+                print(f"❌ API 호출 실패: {e}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"❌ 영상 목록 조회 실패: {e}", file=sys.stderr)
+            sys.exit(1)
         vids = [(it["id"]["videoId"], it["snippet"]["title"], it["snippet"]["publishedAt"])
                 for it in sr.get("items", [])]
     if not vids:

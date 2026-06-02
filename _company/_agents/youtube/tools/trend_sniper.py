@@ -9,7 +9,23 @@ trend_sniper.json. If a key exists in both, trend_sniper.json wins.
 
 Requires:  pip install google-api-python-client requests
 """
-import os, json, time, random, datetime, sys
+import io, os, json, time, random, datetime, sys
+
+os.environ.setdefault("PYTHONUTF8", "1")
+def _force_utf8_stdio():
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+            return
+        except Exception:
+            pass
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    except Exception:
+        pass
+_force_utf8_stdio()
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "trend_sniper.json")
@@ -62,6 +78,7 @@ def main():
 
     try:
         from googleapiclient.discovery import build
+        from googleapiclient.errors import HttpError
     except ImportError:
         print("❌ google-api-python-client가 설치되지 않았어요.")
         print("   설치: pip install google-api-python-client requests")
@@ -74,7 +91,8 @@ def main():
 
     print(f"\n🎯 [트렌드 스나이퍼] 키워드 {chosen} 스캔 시작...")
     youtube = build('youtube', 'v3', developerKey=api_key)
-    last_month = (datetime.datetime.utcnow() - datetime.timedelta(days=30)).isoformat("T") + "Z"
+    last_month_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)
+    last_month = last_month_dt.isoformat(timespec="seconds").replace("+00:00", "Z")
     sniper_data = []
     for q in chosen:
         print(f"📡 [{q}] 검색 중...")
@@ -88,6 +106,18 @@ def main():
                 title = item['snippet']['title']
                 channel = item['snippet']['channelTitle']
                 sniper_data.append(f"[{q}] 채널: {channel} | 제목: {title}")
+        except HttpError as e:
+            error_reason = None
+            try:
+                details = json.loads(e.content.decode('utf-8', errors='replace'))
+                error_reason = details.get('error', {}).get('errors', [{}])[0].get('reason')
+            except Exception:
+                pass
+            if error_reason == 'rateLimitExceeded':
+                print(f"❌ 검색 오류 ({q}): YouTube API 쿼터가 초과되었습니다.")
+                print("   Google Cloud Console에서 API 쿼터를 확인하거나 다음 날 다시 시도하세요.")
+            else:
+                print(f"❌ 검색 오류 ({q}): {e}")
         except Exception as e:
             print(f"❌ 검색 오류 ({q}): {e}")
 
@@ -106,6 +136,12 @@ def main():
 1. 🌍 트렌드 해킹 분석 — 어떤 패턴이 조회수를 끌고 있는지
 2. 🎯 빈집 털기 전략 — 차별화 가능한 틈새 주제
 3. 🎬 파괴적 영상 기획안 — 썸네일 카피, 제목 3개, 후킹 오프닝(첫 5초)
+
+추가 지침:
+- 썸네일 디자인에는 반드시 '감정 흐름 시스템(긴장 → 해소 → 기대)'을 적용하세요.
+- 콘텐츠 후킹 스크립트는 타깃 시청자의 핵심 고통(Pain)에 집중해서 작성하세요.
+- 영상 제작 우선순위는 예상 CTR이 가장 높은 스크립트 기반으로 확정하고, 그 이유를 간단히 설명하세요.
+- 출력에서 '\u005crightarrow' 또는 '\\rightarrow' 같은 LaTeX 문법을 사용하지 마세요. 일반 화살표 '→'를 사용하세요.
 """
 
     # v2.89.70 — LM Studio (OpenAI 호환 API) + Ollama 둘 다 지원. URL/포트로 자동 감지.

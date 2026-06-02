@@ -5,8 +5,22 @@ Input: just YOUTUBE_API_KEY + MY_CHANNEL_ID/HANDLE from youtube_account.json.
 No additional config needed. Output: full report with stats, patterns, and
 data-driven recommendations.
 """
-import os, json, sys, time, datetime, statistics, re
+import io, os, json, sys, time, datetime, statistics, re
 from collections import Counter
+
+os.environ.setdefault("PYTHONUTF8", "1")
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+else:
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    except Exception:
+        pass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ACCOUNT = os.path.join(HERE, "youtube_account.json")
@@ -94,6 +108,7 @@ def main():
 
     try:
         from googleapiclient.discovery import build
+        from googleapiclient.errors import HttpError
     except ImportError:
         print("❌ google-api-python-client 미설치.")
         print("   터미널에서 한 줄: pip3 install google-api-python-client requests")
@@ -148,7 +163,21 @@ def main():
         while len(recent_video_ids) < 50:
             args = {"part": "snippet,contentDetails", "playlistId": uploads, "maxResults": 50}
             if next_token: args["pageToken"] = next_token
-            pi = youtube.playlistItems().list(**args).execute()
+            try:
+                pi = youtube.playlistItems().list(**args).execute()
+            except HttpError as e:
+                error_reason = None
+                try:
+                    details = json.loads(e.content.decode('utf-8', errors='replace'))
+                    error_reason = details.get('error', {}).get('errors', [{}])[0].get('reason')
+                except Exception:
+                    pass
+                if error_reason == 'playlistNotFound':
+                    print("⚠️  업로드 플레이리스트를 찾을 수 없어요. search API로 폴백합니다.")
+                else:
+                    print(f"❌ 업로드 플레이리스트 조회 실패: {e}")
+                uploads = None
+                break
             for item in pi.get("items", []):
                 pub = item["snippet"]["publishedAt"]
                 pub_dt = datetime.datetime.fromisoformat(pub.replace("Z", "+00:00"))
@@ -159,6 +188,30 @@ def main():
             if not next_token: break
             if recent_video_ids and datetime.datetime.fromisoformat(pi["items"][-1]["snippet"]["publishedAt"].replace("Z", "+00:00")) < cutoff:
                 break
+
+    if not recent_video_ids:
+        # uploads playlist가 없거나 비어 있으면 search로 폴백
+        print("⚠️  uploads playlist 조회가 실패했거나 최근 영상이 없어서 search API로 대체합니다.")
+        q_after = cutoff.isoformat(timespec="seconds").replace("+00:00", "Z")
+        try:
+            sr = youtube.search().list(part="snippet", channelId=cid, maxResults=50,
+                                        order="date", publishedAfter=q_after, type="video").execute()
+            recent_video_ids = [it["id"]["videoId"] for it in sr.get("items", []) if it["id"].get("videoId")]
+        except HttpError as e:
+            error_reason = None
+            try:
+                details = json.loads(e.content.decode('utf-8', errors='replace'))
+                error_reason = details.get('error', {}).get('errors', [{}])[0].get('reason')
+            except Exception:
+                pass
+            if error_reason == 'rateLimitExceeded':
+                print("❌ YouTube API 쿼터가 초과되었습니다. 내일 다시 시도하거나 API 쿼터를 확인하세요.")
+            else:
+                print(f"❌ search API 호출 실패: {e}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"❌ search API 호출 실패: {e}")
+            sys.exit(1)
 
     if not recent_video_ids:
         print("⚠️  최근 30일 동안 업로드한 영상이 없어요. 영상 업로드 후 다시 분석해주세요.")
