@@ -145,13 +145,13 @@ def main():
     acct = _load(ACCOUNT)
     cfg  = _load(CONFIG) if os.path.exists(CONFIG) else {}
     api_key = (acct.get("YOUTUBE_API_KEY") or "").strip()
-    handle  = (acct.get("MY_CHANNEL_HANDLE") or "").strip()
-    chan_id = (acct.get("MY_CHANNEL_ID") or "").strip()
+    handle  = (acct.get("MY_CHANNEL_HANDLE") or acct.get("channel_handle") or acct.get("CHANNEL_HANDLE") or "").strip()
+    chan_id = (acct.get("MY_CHANNEL_ID") or acct.get("channel_id") or acct.get("CHANNEL_ID") or "").strip()
     if not api_key:
-        print("❌ YOUTUBE_API_KEY 미설정. youtube_account.json에 채워주세요.")
+        print("❌ YOUTUBE_API_KEY is missing in youtube_account.json. Please add it and retry.")
         sys.exit(1)
     if not (handle or chan_id):
-        print("❌ MY_CHANNEL_HANDLE 또는 MY_CHANNEL_ID 필요.")
+        print("❌ MY_CHANNEL_HANDLE or MY_CHANNEL_ID is missing in youtube_account.json. Please set either channel handle or channel ID.")
         sys.exit(1)
     lookback = int(cfg.get("LOOKBACK_DAYS", 30))
     top_n    = int(cfg.get("TOP_N", 15))
