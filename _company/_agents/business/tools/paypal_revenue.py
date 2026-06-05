@@ -600,3 +600,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+{
+  "MODE": "sandbox",
+  "CLIENT_ID": "ASzvb5i47HKUNPrixeMzhjONUK98GUKf1WD1zu6B7NeaIQY6TO9NiVs-4mg4dDfflO6sTwGdpGsGsba4",
+  "CLIENT_SECRET": "EB7-ZH9vPq1TCR3TvYWEbEZk4C7rsDaHuFGM3nFEnomdgCTFlmQV1733DP3_2JittoIfm2HwjmjXIgIv",
+  "LOOKBACK_DAYS": 30,
+  "CURRENCY": "USD"
+}
